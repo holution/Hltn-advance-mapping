@@ -11,7 +11,6 @@ static bool get_monitor_rect(int monitor, RECT *out);
 static void save_config_default(adv_editor *ed, HWND parent);
 static void save_config_as(adv_editor *ed, HWND parent);
 static void load_config(adv_editor *ed, HWND parent);
-static void recalc_blend(adv_editor *ed);
 
 /* ================================================================
    THEME
@@ -195,65 +194,12 @@ static void layout_output_slices(DisplayConfig *d, uint32_t canvas_cx, uint32_t 
 	}
 	float cw = (float)canvas_cx / (float)cols;
 	float ch = (float)canvas_cy / (float)rows;
-	float pad = 30.0f;
 	for (int i = 0; i < n; i++) {
 		auto &sc = d->slices[i];
 		int col = i % cols;
 		int row = i / cols;
-		float x0 = col * cw - (col > 0 ? pad : 0.0f);
-		float y0 = row * ch - (row > 0 ? pad : 0.0f);
-		float w = cw + (col > 0 ? pad : 0.0f) + (col < cols - 1 ? pad : 0.0f);
-		float h = ch + (row > 0 ? pad : 0.0f) + (row < rows - 1 ? pad : 0.0f);
-		sc.mesh.init_full_rect(sc.mesh_cols, sc.mesh_rows, x0, y0, w, h);
+		sc.mesh.init_full_rect(sc.mesh_cols, sc.mesh_rows, col * cw, row * ch, cw, ch);
 		sc.mesh_dirty = true;
-	}
-}
-
-static void recalc_blend(adv_editor *ed)
-{
-	for (auto &d : ed->displays) {
-		int n = (int)d.slices.size();
-		if (n < 2) continue;
-		for (int i = 0; i < n; i++) {
-			auto &sc = d.slices[i];
-			if (!sc.blend_enabled || !sc.blend_auto) continue;
-
-			float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
-			int nv = sc.mesh.n_vertices();
-			for (int vi = 0; vi < nv; vi++) {
-				Vec2 v = sc.mesh.get_vertex(vi);
-				if (v.x < min_x) min_x = v.x;
-				if (v.x > max_x) max_x = v.x;
-				if (v.y < min_y) min_y = v.y;
-				if (v.y > max_y) max_y = v.y;
-			}
-
-			sc.blend_l = sc.blend_r = sc.blend_t = sc.blend_b = 0;
-			for (int j = 0; j < n; j++) {
-				if (i == j) continue;
-				auto &other = d.slices[j];
-				float o_min_x = 1e9f, o_max_x = -1e9f, o_min_y = 1e9f, o_max_y = -1e9f;
-				for (int vi = 0; vi < other.mesh.n_vertices(); vi++) {
-					Vec2 v = other.mesh.get_vertex(vi);
-					if (v.x < o_min_x) o_min_x = v.x;
-					if (v.x > o_max_x) o_max_x = v.x;
-					if (v.y < o_min_y) o_min_y = v.y;
-					if (v.y > o_max_y) o_max_y = v.y;
-				}
-				if (min_x < o_max_x && max_x > o_min_x &&
-				    min_y < o_max_y && max_y > o_min_y) {
-					int ol = (o_min_x < min_x && o_max_x > min_x) ? (int)(o_max_x - min_x) : 0;
-					if (ol > 0 && ol > sc.blend_l) sc.blend_l = ol < 500 ? ol : 500;
-					int or_ = (o_max_x > max_x && o_min_x < max_x) ? (int)(max_x - o_min_x) : 0;
-					if (or_ > 0 && or_ > sc.blend_r) sc.blend_r = or_ < 500 ? or_ : 500;
-					int ot = (o_min_y < min_y && o_max_y > min_y) ? (int)(o_max_y - min_y) : 0;
-					if (ot > 0 && ot > sc.blend_t) sc.blend_t = ot < 500 ? ot : 500;
-					int ob = (o_max_y > max_y && o_min_y < max_y) ? (int)(max_y - o_min_y) : 0;
-					if (ob > 0 && ob > sc.blend_b) sc.blend_b = ob < 500 ? ob : 500;
-				}
-			}
-			sc.mesh_dirty = true;
-		}
 	}
 }
 
@@ -1244,8 +1190,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 						}
 					if (dd>=0) { ed->displays[dd].slices.push_back(SliceConfig()); 
 				ed->active_display=dd; ed->active_slice=(int)ed->displays[dd].slices.size()-1;
-				layout_output_slices(&ed->displays[dd], ed->canvas_cx, ed->canvas_cy);
-				recalc_blend(ed); }
+				layout_output_slices(&ed->displays[dd], ed->canvas_cx, ed->canvas_cy); }
 						InvalidateRect(hwnd,nullptr,FALSE); return 0;
 					}
 					/* Find which display/slice this item is */
@@ -1288,8 +1233,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			auto sc2 = ed->get_active_slice();
 			if (sc2) {
 				sc2->blend_enabled = !sc2->blend_enabled;
-				if (sc2->blend_enabled && sc2->blend_auto)
-					recalc_blend(ed);
+				sc2->mesh_dirty = true;
 				InvalidateRect(hwnd,nullptr,FALSE); return 0;
 			}
 		}
@@ -1355,7 +1299,6 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				d.slices.push_back(SliceConfig());
 				ed->active_slice=(int)d.slices.size()-1;
 				layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy);
-				recalc_blend(ed);
 				InvalidateRect(hwnd,nullptr,FALSE);
 			}
 			if (cmd==1003 && ed->active_display>=0 && ed->active_slice>=0) {
@@ -1363,7 +1306,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				if (ed->active_slice<(int)d.slices.size()) {
 					d.slices.erase(d.slices.begin()+ed->active_slice);
 					if (d.slices.empty()) d.slices.push_back(SliceConfig());
-					else { layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy); recalc_blend(ed); }
+					else layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy);
 					ed->active_slice=-1;
 					InvalidateRect(hwnd,nullptr,FALSE);
 				}

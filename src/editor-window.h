@@ -11,7 +11,7 @@ struct SliceConfig {
 	int slice_x, slice_y, slice_w, slice_h;
 	int mesh_cols, mesh_rows;
 	int blend_l, blend_r, blend_t, blend_b;
-	bool blend_enabled, blend_auto;
+	bool blend_enabled;
 	int brightness, contrast, gamma, opacity;
 
 	WarpMesh mesh;
@@ -23,7 +23,7 @@ struct SliceConfig {
 		slice_x = 0; slice_y = 0; slice_w = 1920; slice_h = 1080;
 		mesh_cols = 2; mesh_rows = 2;
 		blend_l = 0; blend_r = 0; blend_t = 0; blend_b = 0;
-		blend_enabled = false; blend_auto = true;
+		blend_enabled = false;
 		brightness = 0; contrast = 100; gamma = 100; opacity = 100;
 		mesh_dirty = true; vbuf = nullptr; num_verts = 0;
 		mesh.init_full_rect(2, 2, 0, 0, (float)slice_w, (float)slice_h);
