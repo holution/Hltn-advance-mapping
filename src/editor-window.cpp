@@ -204,19 +204,19 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 
 static std::wstring get_default_config_path()
 {
-	wchar_t path[MAX_PATH] = {};
-	GetModuleFileNameW(nullptr, path, MAX_PATH);
-	std::wstring s(path);
-	auto pos = s.rfind(L'\\');
-	if (pos != std::wstring::npos) s = s.substr(0, pos);
-	s += L"\\hltn-advanced.xml";
+	wchar_t appdata[MAX_PATH] = {};
+	GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+	std::wstring s(appdata);
+	s += L"\\hltn-advanced\\";
+	CreateDirectoryW(s.c_str(), nullptr);
+	s += L"hltn-advanced.xml";
 	return s;
 }
 
 static void xml_save(adv_editor *ed, const wchar_t *path)
 {
 	std::wofstream f(path, std::ios::out | std::ios::trunc);
-	if (!f) return;
+	if (!f) { MessageBoxW(nullptr, L"Failed to save config file", L"HLTN", MB_OK | MB_ICONERROR); return; }
 	f << L"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
 	f << L"<hltn_advanced canvas_cx=\"" << ed->canvas_cx << L"\" canvas_cy=\"" << ed->canvas_cy << L"\">\n";
 	for (auto &d : ed->displays) {
