@@ -54,6 +54,21 @@ static void unload_blend_effect()
 	g_blend_effect = nullptr;
 }
 
+static void set_blend_uniforms(SliceConfig *sc)
+{
+	if (!g_blend_effect || !sc->blend_enabled) return;
+	float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
+	for (int i = 0; i < sc->mesh.n_vertices(); i++) {
+		Vec2 v = sc->mesh.get_vertex(i);
+		if (v.x < min_x) min_x = v.x; if (v.x > max_x) max_x = v.x;
+		if (v.y < min_y) min_y = v.y; if (v.y > max_y) max_y = v.y;
+	}
+	vec4 bounds; vec4_set(&bounds, min_x, max_x, min_y, max_y);
+	vec4 widths; vec4_set(&widths, (float)sc->blend_l, (float)sc->blend_r, (float)sc->blend_t, (float)sc->blend_b);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_bounds"), &bounds);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_widths"), &widths);
+}
+
 static void init_theme()
 {
 	br_bg      = CreateSolidBrush(CLR_BG);
@@ -246,82 +261,26 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 	vd->tvarray = (struct gs_tvertarray *)bzalloc(sizeof(struct gs_tvertarray));
 	vd->tvarray[0].width = 2;
 	vd->tvarray[0].array = bzalloc(nv * sizeof(vec2));
-
-	bool use_blend = sc->blend_enabled && (sc->blend_l > 0 || sc->blend_r > 0 || sc->blend_t > 0 || sc->blend_b > 0);
-	if (use_blend) {
-		vd->colors = (uint32_t *)bzalloc(nv * sizeof(uint32_t));
-		float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
-		int mv = sc->mesh.n_vertices();
-		for (int i = 0; i < mv; i++) {
-			Vec2 v = sc->mesh.get_vertex(i);
-			if (v.x < min_x) min_x = v.x;
-			if (v.x > max_x) max_x = v.x;
-			if (v.y < min_y) min_y = v.y;
-			if (v.y > max_y) max_y = v.y;
-		}
-		float range_x = max_x - min_x;
-		float range_y = max_y - min_y;
-		if (range_x < 1.0f) range_x = 1.0f;
-		if (range_y < 1.0f) range_y = 1.0f;
-		auto calc_alpha = [&](float px, float py) -> float {
-			float a = 1.0f;
-			float da = (px - min_x) / (float)(sc->blend_l > 0 ? sc->blend_l : 1);
-			if (da < a) a = da;
-			da = (max_x - px) / (float)(sc->blend_r > 0 ? sc->blend_r : 1);
-			if (da < a) a = da;
-			da = (py - min_y) / (float)(sc->blend_t > 0 ? sc->blend_t : 1);
-			if (da < a) a = da;
-			da = (max_y - py) / (float)(sc->blend_b > 0 ? sc->blend_b : 1);
-			if (da < a) a = da;
-			if (a < 0.0f) a = 0.0f; if (a > 1.0f) a = 1.0f;
-			return a;
+	float inv_cols = 1.0f / (float)(cols - 1), inv_rows = 1.0f / (float)(rows - 1);
+	float tx0 = (float)sc->slice_x / (float)canvas_cx;
+	float ty0 = (float)sc->slice_y / (float)canvas_cy;
+	float tx1 = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
+	float ty1 = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
+	size_t idx = 0;
+	vec2 *tverts = (vec2 *)vd->tvarray[0].array;
+	for (auto &q : quads) {
+		Vec2 verts[4];
+		for (int i = 0; i < 4; i++) verts[i] = sc->mesh.get_vertex(q[i]);
+		auto setv = [&](int vi) {
+			vd->points[idx] = {verts[vi].x, verts[vi].y, 0.0f};
+			int ci = q[vi] % cols, ri = q[vi] / cols;
+			tverts[idx] = {tx0 + (float)ci * inv_cols * (tx1 - tx0), ty0 + (float)ri * inv_rows * (ty1 - ty0)};
+			idx++;
 		};
-		auto pack_color = [](float a) -> uint32_t {
-			uint8_t alpha = (uint8_t)(a * 255.0f);
-			return (alpha << 24) | 0x00FFFFFF;
-		};
-		float inv_cols2 = 1.0f / (float)(cols - 1), inv_rows2 = 1.0f / (float)(rows - 1);
-		float tx0b = (float)sc->slice_x / (float)canvas_cx;
-		float ty0b = (float)sc->slice_y / (float)canvas_cy;
-		float tx1b = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
-		float ty1b = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
-		size_t idx2 = 0;
-		for (auto &q : quads) {
-			Vec2 verts2[4];
-			for (int i = 0; i < 4; i++) verts2[i] = sc->mesh.get_vertex(q[i]);
-			auto setv2 = [&](int vi) {
-				vd->points[idx2] = {verts2[vi].x, verts2[vi].y, 0.0f};
-				int ci = q[vi] % cols, ri = q[vi] / cols;
-				((vec2 *)vd->tvarray[0].array)[idx2] = {tx0b + (float)ci * inv_cols2 * (tx1b - tx0b), ty0b + (float)ri * inv_rows2 * (ty1b - ty0b)};
-				vd->colors[idx2] = pack_color(calc_alpha(verts2[vi].x, verts2[vi].y));
-				idx2++;
-			};
-			setv2(0); setv2(1); setv2(2); setv2(0); setv2(2); setv2(3);
-		}
-		sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
-		sc->num_verts = (uint32_t)idx2;
-	} else {
-		float inv_cols = 1.0f / (float)(cols - 1), inv_rows = 1.0f / (float)(rows - 1);
-		float tx0 = (float)sc->slice_x / (float)canvas_cx;
-		float ty0 = (float)sc->slice_y / (float)canvas_cy;
-		float tx1 = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
-		float ty1 = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
-		size_t idx = 0;
-		vec2 *tverts = (vec2 *)vd->tvarray[0].array;
-		for (auto &q : quads) {
-			Vec2 verts[4];
-			for (int i = 0; i < 4; i++) verts[i] = sc->mesh.get_vertex(q[i]);
-			auto setv = [&](int vi) {
-				vd->points[idx] = {verts[vi].x, verts[vi].y, 0.0f};
-				int ci = q[vi] % cols, ri = q[vi] / cols;
-				tverts[idx] = {tx0 + (float)ci * inv_cols * (tx1 - tx0), ty0 + (float)ri * inv_rows * (ty1 - ty0)};
-				idx++;
-			};
-			setv(0); setv(1); setv(2); setv(0); setv(2); setv(3);
-		}
-		sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
-		sc->num_verts = (uint32_t)nv;
+		setv(0); setv(1); setv(2); setv(0); setv(2); setv(3);
 	}
+	sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
+	sc->num_verts = (uint32_t)nv;
 	sc->mesh_dirty = false;
 }
 
@@ -799,11 +758,12 @@ static void preview_draw(void *data, uint32_t cx, uint32_t cy)
 			if (has_blend && load_blend_effect() && g_blend_effect) {
 				gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
 				if (bimg) gs_effect_set_texture_srgb(bimg, tex);
-				while (gs_effect_loop(g_blend_effect, "BlendAlpha")) {
+				while (gs_effect_loop(g_blend_effect, "Draw")) {
 					for (int s = 0; s < (int)slices.size(); s++) {
 						auto *sl = &slices[s];
 						if (!sl->blend_enabled) continue;
 						if (!sl->vbuf) continue;
+						set_blend_uniforms(sl);
 						gs_load_vertexbuffer(sl->vbuf);
 						gs_draw(GS_TRIS, 0, sl->num_verts);
 					}
@@ -1088,13 +1048,14 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 	if (has_blend && load_blend_effect() && g_blend_effect) {
 		gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
 		if (bimg) gs_effect_set_texture_srgb(bimg, tex);
-		while (gs_effect_loop(g_blend_effect, "BlendAlpha")) {
+		while (gs_effect_loop(g_blend_effect, "Draw")) {
 			for (auto &sc : d->slices) {
 				if (sc.slice_w <= 0 || sc.slice_h <= 0) continue;
 				if (!sc.blend_enabled) continue;
 				if (sc.mesh_dirty || !sc.vbuf)
 					rebuild_vbuf(&sc, d->canvas_cx, d->canvas_cy);
 				if (sc.vbuf) {
+					set_blend_uniforms(&sc);
 					gs_load_vertexbuffer(sc.vbuf);
 					gs_draw(GS_TRIS, 0, sc.num_verts);
 				}
