@@ -223,14 +223,14 @@ static void recalc_blend(adv_editor *ed)
 				}
 				if (min_x < o_max_x && max_x > o_min_x &&
 				    min_y < o_max_y && max_y > o_min_y) {
-					int overlap_l = (int)(o_max_x - min_x);
-					if (overlap_l > 0 && overlap_l > sc.blend_l) sc.blend_l = overlap_l < 500 ? overlap_l : 500;
-					int overlap_r = (int)(max_x - o_min_x);
-					if (overlap_r > 0 && overlap_r > sc.blend_r) sc.blend_r = overlap_r < 500 ? overlap_r : 500;
-					int overlap_t = (int)(o_max_y - min_y);
-					if (overlap_t > 0 && overlap_t > sc.blend_t) sc.blend_t = overlap_t < 500 ? overlap_t : 500;
-					int overlap_b = (int)(max_y - o_min_y);
-					if (overlap_b > 0 && overlap_b > sc.blend_b) sc.blend_b = overlap_b < 500 ? overlap_b : 500;
+					int ol = (o_min_x < min_x && o_max_x > min_x) ? (int)(o_max_x - min_x) : 0;
+					if (ol > 0 && ol > sc.blend_l) sc.blend_l = ol < 500 ? ol : 500;
+					int or_ = (o_max_x > max_x && o_min_x < max_x) ? (int)(max_x - o_min_x) : 0;
+					if (or_ > 0 && or_ > sc.blend_r) sc.blend_r = or_ < 500 ? or_ : 500;
+					int ot = (o_min_y < min_y && o_max_y > min_y) ? (int)(o_max_y - min_y) : 0;
+					if (ot > 0 && ot > sc.blend_t) sc.blend_t = ot < 500 ? ot : 500;
+					int ob = (o_max_y > max_y && o_min_y < max_y) ? (int)(max_y - o_min_y) : 0;
+					if (ob > 0 && ob > sc.blend_b) sc.blend_b = ob < 500 ? ob : 500;
 				}
 			}
 			sc.mesh_dirty = true;
