@@ -350,6 +350,9 @@ static void save_config_default(adv_editor *ed, HWND parent)
 {
 	std::wstring path = get_default_config_path();
 	xml_save(ed, path.c_str());
+	ed->btn_flash = 8;
+	std::wstring msg = L"Saved to: " + path;
+	MessageBoxW(parent, msg.c_str(), L"HLTN Save", MB_OK | MB_ICONINFORMATION);
 }
 
 static void save_config_as(adv_editor *ed, HWND parent)
@@ -363,8 +366,10 @@ static void save_config_as(adv_editor *ed, HWND parent)
 	ofn.nMaxFile = MAX_PATH;
 	ofn.lpstrDefExt = L"xml";
 	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
-	if (GetSaveFileNameW(&ofn))
+	if (GetSaveFileNameW(&ofn)) {
 		xml_save(ed, path);
+		ed->btn_flash = 8;
+	}
 }
 
 static void load_config(adv_editor *ed, HWND parent)
@@ -579,7 +584,7 @@ static void draw_status(HDC dc, adv_editor *ed)
 
 	int bx = cr.right - 346, by = y + 3, bw = 78, bh = ed->status_h - 6;
 	ed->btn_save_x = bx; ed->btn_save_w = bw;
-	btn(dc, L"Save", bx, by, bw, bh, true, false);
+	btn(dc, L"Save", bx, by, bw, bh, ed->btn_flash > 0, ed->btn_flash > 0);
 	bx += bw + 8;
 	ed->btn_saveas_x = bx; ed->btn_saveas_w = bw;
 	btn(dc, L"Save As", bx, by, bw, bh, false, false);
@@ -593,6 +598,7 @@ static void draw_status(HDC dc, adv_editor *ed)
 
 static void editor_paint(adv_editor *ed)
 {
+	if (ed->btn_flash > 0) ed->btn_flash--;
 	HDC dc = ed->mem_dc;
 	RECT cr; GetClientRect(ed->hwnd, &cr);
 	fill_rect(dc, 0, 0, cr.right, cr.bottom, CLR_BG);

@@ -96,6 +96,7 @@ struct adv_editor {
 	int btn_saveas_x, btn_saveas_w;
 	int btn_load_x, btn_load_w;
 	int btn_close_x, btn_close_w;
+	int btn_flash;
 
 	bool running;
 
