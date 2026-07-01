@@ -198,16 +198,18 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 static void rebuild_nav(adv_editor *ed)
 {
 	int n = 0;
-	for (int d = 0; d < (int)ed->displays.size(); d++) {
+	for (int d = 0; d < (int)ed->displays.size() && n < 30; d++) {
 		wsprintfW(ed->nav_items_name[n], L"\u25B6 Display %d", d + 1);
 		ed->nav_items_depth[n] = 0; n++;
 		int ns = (int)ed->displays[d].slices.size();
-		for (int s = 0; s < ns; s++) {
+		for (int s = 0; s < ns && n < 31; s++) {
 			wsprintfW(ed->nav_items_name[n], L"Slice %d", s + 1);
 			ed->nav_items_depth[n] = 1; n++;
 		}
-		wsprintfW(ed->nav_items_name[n], L"+ Add Slice");
-		ed->nav_items_depth[n] = 1; n++;
+		if (n < 32) {
+			wsprintfW(ed->nav_items_name[n], L"+ Add Slice");
+			ed->nav_items_depth[n] = 1; n++;
+		}
 	}
 	ed->nav_count = n;
 }
@@ -767,10 +769,8 @@ static bool start_output(DisplayConfig *d, uint32_t canvas_cx, uint32_t canvas_c
 	d->output_display = obs_display_create(&gid, 0);
 	if (!d->output_display) { DestroyWindow(d->output_hwnd); d->output_hwnd=nullptr; return false; }
 	d->canvas_cx = canvas_cx; d->canvas_cy = canvas_cy;
-	for (auto &sc : d->slices) {
+	for (auto &sc : d->slices)
 		sc.mesh_dirty = true;
-		rebuild_vbuf(&sc, canvas_cx, canvas_cy);
-	}
 	obs_display_add_draw_callback(d->output_display, output_draw, d);
 	d->output_active = true;
 	return true;
@@ -783,9 +783,11 @@ static void stop_output(DisplayConfig *d)
 		obs_display_destroy(d->output_display); d->output_display = nullptr;
 	}
 	if (d->output_hwnd) { DestroyWindow(d->output_hwnd); d->output_hwnd = nullptr; }
+	obs_enter_graphics();
 	for (auto &s : d->slices) {
 		if (s.vbuf) { gs_vertexbuffer_destroy(s.vbuf); s.vbuf = nullptr; }
 	}
+	obs_leave_graphics();
 	d->output_active = false;
 }
 
@@ -813,6 +815,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 	case WM_SIZE: {
 		RECT rc; GetClientRect(hwnd, &rc);
 		int ww=rc.right, wh=rc.bottom;
+		if (ed->mem_dc) SelectObject(ed->mem_dc, GetStockObject(NULL_BRUSH));
 		if (ed->mem_bmp) DeleteObject(ed->mem_bmp);
 		if (ed->mem_dc) DeleteDC(ed->mem_dc);
 		HDC hdc2 = GetDC(hwnd);
@@ -853,6 +856,8 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 					}
 				}
 		}
+		return 0;
+		}
 		/* Status bar buttons */
 		{ RECT cr; GetClientRect(hwnd, &cr);
 		  int sy = cr.bottom - ed->status_h + 3;
@@ -865,8 +870,6 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				SendMessageW(hwnd, WM_CLOSE, 0, 0); return 0;
 			}
 		  }
-		}
-		return 0;
 		}
 		/* Navigator click */
 		if (mx < ed->left_panel_w) {
@@ -1074,6 +1077,7 @@ void editor_close(adv_editor *ed)
 	for (auto &d : ed->displays) stop_output(&d);
 	if (ed->preview_display) { obs_display_remove_draw_callback(ed->preview_display, preview_draw, ed); obs_display_destroy(ed->preview_display); }
 	if (ed->hwnd) DestroyWindow(ed->hwnd);
+	if (ed->mem_dc) SelectObject(ed->mem_dc, GetStockObject(NULL_BRUSH));
 	if (ed->mem_bmp) DeleteObject(ed->mem_bmp);
 	if (ed->mem_dc) DeleteDC(ed->mem_dc);
 	obs_enter_graphics();
