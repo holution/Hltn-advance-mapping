@@ -1270,6 +1270,10 @@ adv_editor *editor_open()
 		if (ed->preview_display) obs_display_add_draw_callback(ed->preview_display, preview_draw, ed);
 	}
 	ShowWindow(ed->hwnd, SW_SHOW); UpdateWindow(ed->hwnd);
+	{
+		std::wstring def = get_default_config_path();
+		xml_load(ed, def.c_str());
+	}
 	InvalidateRect(ed->hwnd, nullptr, FALSE);
 	return ed;
 }
