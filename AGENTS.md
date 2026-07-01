@@ -1,5 +1,16 @@
 # HLTN Advanced Output — Project Context
 
+## Project Vision
+Mengembangkan **OBS Studio sebagai creative software untuk New Media Art**.
+Dua plugin inti dalam monorepo `Hltn_Map/`:
+
+| Plugin | Type | Path | Fungsi |
+|--------|------|------|--------|
+| **HLTN Mapping** | Filter | `obs-perspective-mesh/` | Perspective mesh warp filter untuk source video |
+| **HLTN Advanced Output** | Output | `obs-hltn-advanced/` | Multi-display output dengan warp mesh projection mapping |
+
+Repositori ini fokus pada **HLTN Advanced Output**.
+
 ## Overview
 Plugin OBS Studio untuk multi-display output dengan warp mesh projection mapping.
 Menu di OBS: **Tools → Advance Display Output**
