@@ -1,10 +1,16 @@
 #include "editor-window.h"
+#include <commdlg.h>
+#include <string>
+#include <fstream>
 
 /* forward */
 static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy);
 static bool start_output(DisplayConfig *d, uint32_t canvas_cx, uint32_t canvas_cy);
 static void stop_output(DisplayConfig *d);
 static bool get_monitor_rect(int monitor, RECT *out);
+static void save_config_default(adv_editor *ed, HWND parent);
+static void save_config_as(adv_editor *ed, HWND parent);
+static void load_config(adv_editor *ed, HWND parent);
 
 /* ================================================================
    THEME
@@ -190,6 +196,192 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 	sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
 	sc->num_verts = (uint32_t)nv;
 	sc->mesh_dirty = false;
+}
+
+/* ================================================================
+   CONFIG SAVE / LOAD (XML)
+   ================================================================ */
+
+static std::wstring get_default_config_path()
+{
+	wchar_t path[MAX_PATH] = {};
+	GetModuleFileNameW(nullptr, path, MAX_PATH);
+	std::wstring s(path);
+	auto pos = s.rfind(L'\\');
+	if (pos != std::wstring::npos) s = s.substr(0, pos);
+	s += L"\\hltn-advanced.xml";
+	return s;
+}
+
+static void xml_save(adv_editor *ed, const wchar_t *path)
+{
+	std::wofstream f(path, std::ios::out | std::ios::trunc);
+	if (!f) return;
+	f << L"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+	f << L"<hltn_advanced canvas_cx=\"" << ed->canvas_cx << L"\" canvas_cy=\"" << ed->canvas_cy << L"\">\n";
+	for (auto &d : ed->displays) {
+		f << L"  <display output_type=\"" << d.output_type
+		  << L"\" monitor=\"" << d.monitor << L"\">\n";
+		for (auto &sc : d.slices) {
+			f << L"    <slice x=\"" << sc.slice_x << L"\" y=\"" << sc.slice_y
+			  << L"\" w=\"" << sc.slice_w << L"\" h=\"" << sc.slice_h
+			  << L"\" mesh_cols=\"" << sc.mesh_cols << L"\" mesh_rows=\"" << sc.mesh_rows
+			  << L"\" blend_l=\"" << sc.blend_l << L"\" blend_r=\"" << sc.blend_r
+			  << L"\" blend_t=\"" << sc.blend_t << L"\" blend_b=\"" << sc.blend_b
+			  << L"\" brightness=\"" << sc.brightness << L"\" contrast=\"" << sc.contrast
+			  << L"\" gamma=\"" << sc.gamma << L"\" opacity=\"" << sc.opacity << L"\">\n";
+			int nv = sc.mesh.n_vertices();
+			f << L"      <mesh cols=\"" << sc.mesh.n_columns() << L"\" rows=\"" << sc.mesh.n_rows() << L"\">\n";
+			for (int i = 0; i < nv; i++) {
+				Vec2 v = sc.mesh.get_vertex(i);
+				f << L"        <v x=\"" << v.x << L"\" y=\"" << v.y << L"\"/>\n";
+			}
+			f << L"      </mesh>\n";
+			f << L"    </slice>\n";
+		}
+		f << L"  </display>\n";
+	}
+	f << L"</hltn_advanced>\n";
+	f.close();
+}
+
+static void xml_load(adv_editor *ed, const wchar_t *path)
+{
+	std::wifstream f(path);
+	if (!f) return;
+	std::wstring xml((std::istreambuf_iterator<wchar_t>(f)), std::istreambuf_iterator<wchar_t>());
+	f.close();
+
+	obs_enter_graphics();
+	for (auto &d : ed->displays)
+		for (auto &s : d.slices)
+			if (s.vbuf) { gs_vertexbuffer_destroy(s.vbuf); s.vbuf = nullptr; }
+	obs_leave_graphics();
+	ed->displays.clear();
+
+	auto get_attr = [](const std::wstring &s, const wchar_t *name) -> std::wstring {
+		std::wstring key = std::wstring(L" ") + name + L"=\"";
+		size_t p = s.find(key);
+		if (p == std::wstring::npos) return L"";
+		p += key.size();
+		size_t e = s.find(L'"', p);
+		if (e == std::wstring::npos) return L"";
+		return s.substr(p, e - p);
+	};
+	auto get_int = [&](const std::wstring &s, const wchar_t *name, int def = 0) -> int {
+		auto v = get_attr(s, name);
+		return v.empty() ? def : _wtoi(v.c_str());
+	};
+	auto get_float = [&](const std::wstring &s, const wchar_t *name, float def = 0.0f) -> float {
+		auto v = get_attr(s, name);
+		return v.empty() ? def : (float)_wtof(v.c_str());
+	};
+
+	size_t pos = 0;
+	size_t root_end = xml.find(L'>', xml.find(L"<hltn_advanced"));
+	ed->canvas_cx = get_int(xml.substr(0, root_end + 1), L"canvas_cx", ed->canvas_cx);
+	ed->canvas_cy = get_int(xml.substr(0, root_end + 1), L"canvas_cy", ed->canvas_cy);
+
+	while (true) {
+		size_t ds = xml.find(L"<display", pos);
+		if (ds == std::wstring::npos) break;
+		size_t de = xml.find(L"</display>", ds);
+		if (de == std::wstring::npos) break;
+		pos = de + 10;
+
+		DisplayConfig d;
+		std::wstring dtag = xml.substr(ds, xml.find(L'>', ds) - ds + 1);
+		d.output_type = get_int(dtag, L"output_type", 0);
+		d.monitor = get_int(dtag, L"monitor", 1);
+
+		size_t sp = ds;
+		while (true) {
+			size_t ss = xml.find(L"<slice", sp);
+			if (ss == std::wstring::npos || ss > de) break;
+			size_t se = xml.find(L"</slice>", ss);
+			if (se == std::wstring::npos || se > de) break;
+			sp = se + 8;
+
+			SliceConfig sc;
+			std::wstring stag = xml.substr(ss, xml.find(L'>', ss) - ss + 1);
+			sc.slice_x = get_int(stag, L"x", 0); sc.slice_y = get_int(stag, L"y", 0);
+			sc.slice_w = get_int(stag, L"w", 1920); sc.slice_h = get_int(stag, L"h", 1080);
+			sc.mesh_cols = get_int(stag, L"mesh_cols", 2); sc.mesh_rows = get_int(stag, L"mesh_rows", 2);
+			sc.blend_l = get_int(stag, L"blend_l"); sc.blend_r = get_int(stag, L"blend_r");
+			sc.blend_t = get_int(stag, L"blend_t"); sc.blend_b = get_int(stag, L"blend_b");
+			sc.brightness = get_int(stag, L"brightness");
+			sc.contrast = get_int(stag, L"contrast", 100);
+			sc.gamma = get_int(stag, L"gamma", 100);
+			sc.opacity = get_int(stag, L"opacity", 100);
+
+			size_t ms = xml.find(L"<mesh", ss);
+			if (ms != std::wstring::npos && ms < se) {
+				size_t me_start = xml.find(L'>', ms);
+				int mcols = get_int(xml.substr(ms, me_start - ms + 1), L"cols", sc.mesh_cols);
+				int mrows = get_int(xml.substr(ms, me_start - ms + 1), L"rows", sc.mesh_rows);
+				sc.mesh.resize(mcols, mrows);
+				int vi = 0;
+				size_t vp = ms;
+				while (vi < mcols * mrows) {
+					size_t vs = xml.find(L"<v", vp);
+					if (vs == std::wstring::npos || vs > se) break;
+					size_t ve = xml.find(L"/>", vs);
+					if (ve == std::wstring::npos) break;
+					vp = ve + 2;
+					std::wstring vtag = xml.substr(vs, ve - vs + 2);
+					sc.mesh.set_vertex(vi, {get_float(vtag, L"x"), get_float(vtag, L"y")});
+					vi++;
+				}
+			}
+			sc.mesh_dirty = true;
+			d.slices.push_back(sc);
+		}
+		if (d.slices.empty()) d.slices.push_back(SliceConfig());
+		ed->displays.push_back(d);
+	}
+	if (ed->displays.empty()) {
+		ed->displays.push_back(DisplayConfig());
+	}
+	ed->active_display = 0;
+	ed->active_slice = 0;
+}
+
+static void save_config_default(adv_editor *ed, HWND parent)
+{
+	std::wstring path = get_default_config_path();
+	xml_save(ed, path.c_str());
+}
+
+static void save_config_as(adv_editor *ed, HWND parent)
+{
+	wchar_t path[MAX_PATH] = L"hltn-advanced.xml";
+	OPENFILENAMEW ofn = {};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = parent;
+	ofn.lpstrFilter = L"XML Files\0*.xml\0All Files\0*.*\0";
+	ofn.lpstrFile = path;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrDefExt = L"xml";
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
+	if (GetSaveFileNameW(&ofn))
+		xml_save(ed, path);
+}
+
+static void load_config(adv_editor *ed, HWND parent)
+{
+	wchar_t path[MAX_PATH] = {};
+	OPENFILENAMEW ofn = {};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = parent;
+	ofn.lpstrFilter = L"XML Files\0*.xml\0All Files\0*.*\0";
+	ofn.lpstrFile = path;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrDefExt = L"xml";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+	if (GetOpenFileNameW(&ofn)) {
+		xml_load(ed, path);
+		InvalidateRect(ed->hwnd, nullptr, FALSE);
+	}
 }
 
 /* ================================================================
@@ -385,9 +577,15 @@ static void draw_status(HDC dc, adv_editor *ed)
 		sc ? sc->mesh_cols : 0, sc ? sc->mesh_rows : 0, ed->zoom * 100);
 	draw_text(dc, buf, 10, y, cr.right - 20, ed->status_h, CLR_TEXT_DIM, hf_small, DT_RIGHT);
 
-	int bx = cr.right - 174, by = y + 3, bw = 78, bh = ed->status_h - 6;
+	int bx = cr.right - 346, by = y + 3, bw = 78, bh = ed->status_h - 6;
 	ed->btn_save_x = bx; ed->btn_save_w = bw;
 	btn(dc, L"Save", bx, by, bw, bh, true, false);
+	bx += bw + 8;
+	ed->btn_saveas_x = bx; ed->btn_saveas_w = bw;
+	btn(dc, L"Save As", bx, by, bw, bh, false, false);
+	bx += bw + 8;
+	ed->btn_load_x = bx; ed->btn_load_w = bw;
+	btn(dc, L"Load", bx, by, bw, bh, false, false);
 	bx += bw + 8;
 	ed->btn_close_x = bx; ed->btn_close_w = bw;
 	btn(dc, L"Close", bx, by, bw, bh, false, false);
@@ -859,7 +1057,13 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 		  int sh = ed->status_h - 6;
 		  if (my >= sy && my < sy + sh) {
 			if (mx >= ed->btn_save_x && mx < ed->btn_save_x + ed->btn_save_w) {
-				SendMessageW(hwnd, WM_CLOSE, 0, 0); return 0;
+				save_config_default(ed, hwnd); return 0;
+			}
+			if (mx >= ed->btn_saveas_x && mx < ed->btn_saveas_x + ed->btn_saveas_w) {
+				save_config_as(ed, hwnd); return 0;
+			}
+			if (mx >= ed->btn_load_x && mx < ed->btn_load_x + ed->btn_load_w) {
+				load_config(ed, hwnd); return 0;
 			}
 			if (mx >= ed->btn_close_x && mx < ed->btn_close_x + ed->btn_close_w) {
 				SendMessageW(hwnd, WM_CLOSE, 0, 0); return 0;

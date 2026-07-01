@@ -67,6 +67,7 @@ $link_args = @(
     $obsImplib,
     $feImplib,
     "-lgdi32",
+    "-lcomdlg32",
     "-static-libgcc",
     "-static-libstdc++",
     "-Wl,--subsystem,windows"
