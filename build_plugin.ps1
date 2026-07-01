@@ -87,8 +87,8 @@ if (Test-Path $dllPath) {
     exit 1
 }
 
-# Step 5: Runtime DLLs
-Write-Host "Step 5: Runtime DLLs..."
+# Step 5: Runtime DLLs + data
+Write-Host "Step 5: Runtime DLLs + data..."
 $runtime = @(
     "$mingw\libgcc_s_seh-1.dll",
     "$mingw\libstdc++-6.dll",
@@ -98,6 +98,10 @@ foreach ($r in $runtime) {
     Copy-Item $r -Destination $build -Force
     Write-Host "  $(Split-Path $r -Leaf)"
 }
+$dataDir = "$build\data"
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+Copy-Item "$PSScriptRoot\data\edge_blend.effect" -Destination $dataDir -Force
+Write-Host "  edge_blend.effect"
 
 Write-Host "`nBUILD SUCCESS!"
 Write-Host "Output: $dllPath"

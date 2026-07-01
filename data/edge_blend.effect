@@ -1,0 +1,54 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+sampler_state textureSampler {
+	Filter    = Linear;
+	AddressU  = Clamp;
+	AddressV  = Clamp;
+};
+
+struct VertData {
+	float4 pos   : POSITION;
+	float2 uv    : TEXCOORD0;
+	float4 color : COLOR;
+};
+
+VertData VSDefault(VertData vIn)
+{
+	VertData vOut;
+	vOut.pos   = mul(float4(vIn.pos.xyz, 1.0), ViewProj);
+	vOut.uv    = vIn.uv;
+	vOut.color = vIn.color;
+	return vOut;
+}
+
+float4 PSDraw(VertData vIn) : SV_Target
+{
+	float4 texColor = image.Sample(textureSampler, vIn.uv);
+	texColor.r *= vIn.color.r;
+	texColor.g *= vIn.color.g;
+	texColor.b *= vIn.color.b;
+	texColor.a *= vIn.color.a;
+	return texColor;
+}
+
+float4 PSBlend(VertData vIn) : SV_Target
+{
+	float4 texColor = image.Sample(textureSampler, vIn.uv);
+	texColor.a *= vIn.color.a;
+	return texColor;
+}
+
+technique Draw {
+	pass P0 {
+		vertex_shader = VSDefault(vIn);
+		pixel_shader  = PSDraw(vIn);
+	}
+}
+
+technique BlendAlpha {
+	pass P0 {
+		vertex_shader = VSDefault(vIn);
+		pixel_shader  = PSBlend(vIn);
+	}
+}

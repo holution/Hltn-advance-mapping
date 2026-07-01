@@ -11,6 +11,7 @@ static bool get_monitor_rect(int monitor, RECT *out);
 static void save_config_default(adv_editor *ed, HWND parent);
 static void save_config_as(adv_editor *ed, HWND parent);
 static void load_config(adv_editor *ed, HWND parent);
+static void recalc_blend(adv_editor *ed);
 
 /* ================================================================
    THEME
@@ -30,6 +31,28 @@ static void load_config(adv_editor *ed, HWND parent);
 static HBRUSH br_bg, br_panel, br_surface, br_toolbar, br_status, br_accent;
 static HFONT hf_normal, hf_small, hf_title;
 static HPEN pen_border, pen_accent;
+static gs_effect_t *g_blend_effect = nullptr;
+
+static bool load_blend_effect()
+{
+	if (g_blend_effect) return true;
+	char *f = obs_module_file("edge_blend.effect");
+	if (!f) return false;
+	obs_enter_graphics();
+	g_blend_effect = gs_effect_create_from_file(f, nullptr);
+	obs_leave_graphics();
+	bfree(f);
+	return g_blend_effect != nullptr;
+}
+
+static void unload_blend_effect()
+{
+	if (!g_blend_effect) return;
+	obs_enter_graphics();
+	gs_effect_destroy(g_blend_effect);
+	obs_leave_graphics();
+	g_blend_effect = nullptr;
+}
 
 static void init_theme()
 {
@@ -152,6 +175,54 @@ static void layout_output_slices(DisplayConfig *d, uint32_t canvas_cx, uint32_t 
 	}
 }
 
+static void recalc_blend(adv_editor *ed)
+{
+	for (auto &d : ed->displays) {
+		int n = (int)d.slices.size();
+		if (n < 2) continue;
+		for (int i = 0; i < n; i++) {
+			auto &sc = d.slices[i];
+			if (!sc.blend_enabled || !sc.blend_auto) continue;
+
+			float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
+			int nv = sc.mesh.n_vertices();
+			for (int vi = 0; vi < nv; vi++) {
+				Vec2 v = sc.mesh.get_vertex(vi);
+				if (v.x < min_x) min_x = v.x;
+				if (v.x > max_x) max_x = v.x;
+				if (v.y < min_y) min_y = v.y;
+				if (v.y > max_y) max_y = v.y;
+			}
+
+			sc.blend_l = sc.blend_r = sc.blend_t = sc.blend_b = 0;
+			for (int j = 0; j < n; j++) {
+				if (i == j) continue;
+				auto &other = d.slices[j];
+				float o_min_x = 1e9f, o_max_x = -1e9f, o_min_y = 1e9f, o_max_y = -1e9f;
+				for (int vi = 0; vi < other.mesh.n_vertices(); vi++) {
+					Vec2 v = other.mesh.get_vertex(vi);
+					if (v.x < o_min_x) o_min_x = v.x;
+					if (v.x > o_max_x) o_max_x = v.x;
+					if (v.y < o_min_y) o_min_y = v.y;
+					if (v.y > o_max_y) o_max_y = v.y;
+				}
+				if (min_x < o_max_x && max_x > o_min_x &&
+				    min_y < o_max_y && max_y > o_min_y) {
+					int overlap_l = (int)(o_max_x - min_x);
+					if (overlap_l > 0 && overlap_l > sc.blend_l) sc.blend_l = overlap_l < 500 ? overlap_l : 500;
+					int overlap_r = (int)(max_x - o_min_x);
+					if (overlap_r > 0 && overlap_r > sc.blend_r) sc.blend_r = overlap_r < 500 ? overlap_r : 500;
+					int overlap_t = (int)(o_max_y - min_y);
+					if (overlap_t > 0 && overlap_t > sc.blend_t) sc.blend_t = overlap_t < 500 ? overlap_t : 500;
+					int overlap_b = (int)(max_y - o_min_y);
+					if (overlap_b > 0 && overlap_b > sc.blend_b) sc.blend_b = overlap_b < 500 ? overlap_b : 500;
+				}
+			}
+			sc.mesh_dirty = true;
+		}
+	}
+}
+
 /* ================================================================
    REBUILD VBUF
    ================================================================ */
@@ -175,26 +246,82 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 	vd->tvarray = (struct gs_tvertarray *)bzalloc(sizeof(struct gs_tvertarray));
 	vd->tvarray[0].width = 2;
 	vd->tvarray[0].array = bzalloc(nv * sizeof(vec2));
-	float inv_cols = 1.0f / (float)(cols - 1), inv_rows = 1.0f / (float)(rows - 1);
-	float tx0 = (float)sc->slice_x / (float)canvas_cx;
-	float ty0 = (float)sc->slice_y / (float)canvas_cy;
-	float tx1 = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
-	float ty1 = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
-	size_t idx = 0;
-	vec2 *tverts = (vec2 *)vd->tvarray[0].array;
-	for (auto &q : quads) {
-		Vec2 verts[4];
-		for (int i = 0; i < 4; i++) verts[i] = sc->mesh.get_vertex(q[i]);
-		auto setv = [&](int vi) {
-			vd->points[idx] = {verts[vi].x, verts[vi].y, 0.0f};
-			int ci = q[vi] % cols, ri = q[vi] / cols;
-			tverts[idx] = {tx0 + (float)ci * inv_cols * (tx1 - tx0), ty0 + (float)ri * inv_rows * (ty1 - ty0)};
-			idx++;
+
+	bool use_blend = sc->blend_enabled && (sc->blend_l > 0 || sc->blend_r > 0 || sc->blend_t > 0 || sc->blend_b > 0);
+	if (use_blend) {
+		vd->colors = (uint32_t *)bzalloc(nv * sizeof(uint32_t));
+		float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
+		int mv = sc->mesh.n_vertices();
+		for (int i = 0; i < mv; i++) {
+			Vec2 v = sc->mesh.get_vertex(i);
+			if (v.x < min_x) min_x = v.x;
+			if (v.x > max_x) max_x = v.x;
+			if (v.y < min_y) min_y = v.y;
+			if (v.y > max_y) max_y = v.y;
+		}
+		float range_x = max_x - min_x;
+		float range_y = max_y - min_y;
+		if (range_x < 1.0f) range_x = 1.0f;
+		if (range_y < 1.0f) range_y = 1.0f;
+		auto calc_alpha = [&](float px, float py) -> float {
+			float a = 1.0f;
+			float da = (px - min_x) / (float)(sc->blend_l > 0 ? sc->blend_l : 1);
+			if (da < a) a = da;
+			da = (max_x - px) / (float)(sc->blend_r > 0 ? sc->blend_r : 1);
+			if (da < a) a = da;
+			da = (py - min_y) / (float)(sc->blend_t > 0 ? sc->blend_t : 1);
+			if (da < a) a = da;
+			da = (max_y - py) / (float)(sc->blend_b > 0 ? sc->blend_b : 1);
+			if (da < a) a = da;
+			if (a < 0.0f) a = 0.0f; if (a > 1.0f) a = 1.0f;
+			return a;
 		};
-		setv(0); setv(1); setv(2); setv(0); setv(2); setv(3);
+		auto pack_color = [](float a) -> uint32_t {
+			uint8_t alpha = (uint8_t)(a * 255.0f);
+			return (alpha << 24) | 0x00FFFFFF;
+		};
+		float inv_cols2 = 1.0f / (float)(cols - 1), inv_rows2 = 1.0f / (float)(rows - 1);
+		float tx0b = (float)sc->slice_x / (float)canvas_cx;
+		float ty0b = (float)sc->slice_y / (float)canvas_cy;
+		float tx1b = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
+		float ty1b = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
+		size_t idx2 = 0;
+		for (auto &q : quads) {
+			Vec2 verts2[4];
+			for (int i = 0; i < 4; i++) verts2[i] = sc->mesh.get_vertex(q[i]);
+			auto setv2 = [&](int vi) {
+				vd->points[idx2] = {verts2[vi].x, verts2[vi].y, 0.0f};
+				int ci = q[vi] % cols, ri = q[vi] / cols;
+				((vec2 *)vd->tvarray[0].array)[idx2] = {tx0b + (float)ci * inv_cols2 * (tx1b - tx0b), ty0b + (float)ri * inv_rows2 * (ty1b - ty0b)};
+				vd->colors[idx2] = pack_color(calc_alpha(verts2[vi].x, verts2[vi].y));
+				idx2++;
+			};
+			setv2(0); setv2(1); setv2(2); setv2(0); setv2(2); setv2(3);
+		}
+		sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
+		sc->num_verts = (uint32_t)idx2;
+	} else {
+		float inv_cols = 1.0f / (float)(cols - 1), inv_rows = 1.0f / (float)(rows - 1);
+		float tx0 = (float)sc->slice_x / (float)canvas_cx;
+		float ty0 = (float)sc->slice_y / (float)canvas_cy;
+		float tx1 = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
+		float ty1 = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
+		size_t idx = 0;
+		vec2 *tverts = (vec2 *)vd->tvarray[0].array;
+		for (auto &q : quads) {
+			Vec2 verts[4];
+			for (int i = 0; i < 4; i++) verts[i] = sc->mesh.get_vertex(q[i]);
+			auto setv = [&](int vi) {
+				vd->points[idx] = {verts[vi].x, verts[vi].y, 0.0f};
+				int ci = q[vi] % cols, ri = q[vi] / cols;
+				tverts[idx] = {tx0 + (float)ci * inv_cols * (tx1 - tx0), ty0 + (float)ri * inv_rows * (ty1 - ty0)};
+				idx++;
+			};
+			setv(0); setv(1); setv(2); setv(0); setv(2); setv(3);
+		}
+		sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
+		sc->num_verts = (uint32_t)nv;
 	}
-	sc->vbuf = gs_vertexbuffer_create(vd, GS_DYNAMIC);
-	sc->num_verts = (uint32_t)nv;
 	sc->mesh_dirty = false;
 }
 
@@ -503,10 +630,17 @@ static void draw_inspector(HDC dc, adv_editor *ed)
 		slider_int_track(dc, L"Rows", x + pad, y, w - pad*2, &sc->mesh_rows, 2, 32, ed); y += 26;
 
 		y = insp_section(dc, x + 4, y, w - 8, L"Edge Blend");
-		slider_int_track(dc, L"Left",   x + pad, y, w - pad*2, &sc->blend_l, 0, 500, ed); y += 22;
-		slider_int_track(dc, L"Right",  x + pad, y, w - pad*2, &sc->blend_r, 0, 500, ed); y += 22;
-		slider_int_track(dc, L"Top",    x + pad, y, w - pad*2, &sc->blend_t, 0, 500, ed); y += 22;
-		slider_int_track(dc, L"Bottom", x + pad, y, w - pad*2, &sc->blend_b, 0, 500, ed); y += 26;
+		ed->btn_blend_check[0] = x + pad; ed->btn_blend_check[1] = y;
+		ed->btn_blend_check[2] = 70; ed->btn_blend_check[3] = 18;
+		btn(dc, sc->blend_enabled ? L"[x] Enable" : L"[ ] Enable", x + pad, y, 70, 18, false, sc->blend_enabled);
+		y += 22;
+		if (sc->blend_enabled) {
+			slider_int_track(dc, L"Left",   x + pad, y, w - pad*2, &sc->blend_l, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"Right",  x + pad, y, w - pad*2, &sc->blend_r, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"Top",    x + pad, y, w - pad*2, &sc->blend_t, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"Bottom", x + pad, y, w - pad*2, &sc->blend_b, 0, 500, ed); y += 22;
+		}
+		y += 4;
 
 		y = insp_section(dc, x + 4, y, w - 8, L"Color Adjust");
 		slider_int_track(dc, L"Brightness", x + pad, y, w - pad*2, &sc->brightness, -100, 100, ed); y += 22;
@@ -653,9 +787,26 @@ static void preview_draw(void *data, uint32_t cx, uint32_t cy)
 			while (gs_effect_loop(eff, "Draw")) {
 				for (int s = 0; s < (int)slices.size(); s++) {
 					auto *sl = &slices[s];
+					if (sl->blend_enabled) continue;
 					if (!sl->vbuf) continue;
 					gs_load_vertexbuffer(sl->vbuf);
 					gs_draw(GS_TRIS, 0, sl->num_verts);
+				}
+			}
+			bool has_blend = false;
+			for (int s = 0; s < (int)slices.size(); s++)
+				if (slices[s].blend_enabled) { has_blend = true; break; }
+			if (has_blend && load_blend_effect() && g_blend_effect) {
+				gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
+				if (bimg) gs_effect_set_texture_srgb(bimg, tex);
+				while (gs_effect_loop(g_blend_effect, "BlendAlpha")) {
+					for (int s = 0; s < (int)slices.size(); s++) {
+						auto *sl = &slices[s];
+						if (!sl->blend_enabled) continue;
+						if (!sl->vbuf) continue;
+						gs_load_vertexbuffer(sl->vbuf);
+						gs_draw(GS_TRIS, 0, sl->num_verts);
+					}
 				}
 			}
 		}
@@ -916,12 +1067,13 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 	gs_effect_t *eff = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	if (!eff) return;
 	gs_eparam_t *img = gs_effect_get_param_by_name(eff, "image");
-	if (img) gs_effect_set_texture_srgb(img, tex);
 	gs_viewport_push();
 	gs_set_viewport(0, 0, (int)cx, (int)cy);
+
 	while (gs_effect_loop(eff, "Draw")) {
 		for (auto &sc : d->slices) {
 			if (sc.slice_w <= 0 || sc.slice_h <= 0) continue;
+			if (sc.blend_enabled) continue;
 			if (sc.mesh_dirty || !sc.vbuf)
 				rebuild_vbuf(&sc, d->canvas_cx, d->canvas_cy);
 			if (sc.vbuf) {
@@ -930,6 +1082,26 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 			}
 		}
 	}
+
+	bool has_blend = false;
+	for (auto &sc : d->slices) if (sc.blend_enabled) { has_blend = true; break; }
+	if (has_blend && load_blend_effect() && g_blend_effect) {
+		gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
+		if (bimg) gs_effect_set_texture_srgb(bimg, tex);
+		while (gs_effect_loop(g_blend_effect, "BlendAlpha")) {
+			for (auto &sc : d->slices) {
+				if (sc.slice_w <= 0 || sc.slice_h <= 0) continue;
+				if (!sc.blend_enabled) continue;
+				if (sc.mesh_dirty || !sc.vbuf)
+					rebuild_vbuf(&sc, d->canvas_cx, d->canvas_cy);
+				if (sc.vbuf) {
+					gs_load_vertexbuffer(sc.vbuf);
+					gs_draw(GS_TRIS, 0, sc.num_verts);
+				}
+			}
+		}
+	}
+
 	gs_load_vertexbuffer(nullptr);
 	gs_viewport_pop();
 }
@@ -1090,7 +1262,8 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 						}
 					if (dd>=0) { ed->displays[dd].slices.push_back(SliceConfig()); 
 				ed->active_display=dd; ed->active_slice=(int)ed->displays[dd].slices.size()-1;
-				layout_output_slices(&ed->displays[dd], ed->canvas_cx, ed->canvas_cy); }
+				layout_output_slices(&ed->displays[dd], ed->canvas_cx, ed->canvas_cy);
+				recalc_blend(ed); }
 						InvalidateRect(hwnd,nullptr,FALSE); return 0;
 					}
 					/* Find which display/slice this item is */
@@ -1126,6 +1299,17 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			auto dc2 = (ed->active_display >= 0) ? &ed->displays[ed->active_display] : nullptr;
 			if (dc2) { if (dc2->output_active) stop_output(dc2); else start_output(dc2, ed->canvas_cx, ed->canvas_cy); }
 			InvalidateRect(hwnd,nullptr,FALSE); return 0;
+		}
+		/* Edge Blend checkbox */
+		int *bc = ed->btn_blend_check;
+		if (mx>=bc[0] && mx<=bc[0]+bc[2] && my>=bc[1] && my<=bc[1]+bc[3]) {
+			auto sc2 = ed->get_active_slice();
+			if (sc2) {
+				sc2->blend_enabled = !sc2->blend_enabled;
+				if (sc2->blend_enabled && sc2->blend_auto)
+					recalc_blend(ed);
+				InvalidateRect(hwnd,nullptr,FALSE); return 0;
+			}
 		}
 		/* Output type buttons */
 		{	RECT cr3; GetClientRect(hwnd,&cr3);
@@ -1189,6 +1373,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				d.slices.push_back(SliceConfig());
 				ed->active_slice=(int)d.slices.size()-1;
 				layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy);
+				recalc_blend(ed);
 				InvalidateRect(hwnd,nullptr,FALSE);
 			}
 			if (cmd==1003 && ed->active_display>=0 && ed->active_slice>=0) {
@@ -1196,7 +1381,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				if (ed->active_slice<(int)d.slices.size()) {
 					d.slices.erase(d.slices.begin()+ed->active_slice);
 					if (d.slices.empty()) d.slices.push_back(SliceConfig());
-					else layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy);
+					else { layout_output_slices(&d, ed->canvas_cx, ed->canvas_cy); recalc_blend(ed); }
 					ed->active_slice=-1;
 					InvalidateRect(hwnd,nullptr,FALSE);
 				}
@@ -1235,6 +1420,7 @@ adv_editor *editor_open()
 	}
 
 	init_theme();
+	load_blend_effect();
 	HINSTANCE hi = GetModuleHandleW(nullptr);
 	WNDCLASSW wc = {};
 	if (!GetClassInfoW(hi, WND_CLASS, &wc)) {
@@ -1299,6 +1485,7 @@ void editor_close(adv_editor *ed)
 		for (auto &s : d.slices)
 			if (s.vbuf) { gs_vertexbuffer_destroy(s.vbuf); s.vbuf = nullptr; }
 	obs_leave_graphics();
+	unload_blend_effect();
 	done_theme();
 	bfree(ed);
 }
