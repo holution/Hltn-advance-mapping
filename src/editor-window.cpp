@@ -804,7 +804,7 @@ static LRESULT CALLBACK editor_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 	case WM_CLOSE:
 		for (auto &d : ed->displays) stop_output(&d);
 		DestroyWindow(hwnd); return 0;
-	case WM_DESTROY: ed->running = false; PostQuitMessage(0); return 0;
+	case WM_DESTROY: return 0;
 	case WM_ERASEBKGND: return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT ps; BeginPaint(hwnd, &ps);
