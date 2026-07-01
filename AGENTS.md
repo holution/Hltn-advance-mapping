@@ -9,6 +9,12 @@ Dua plugin inti dalam monorepo `Hltn_Map/`:
 | **HLTN Mapping** | Filter | `obs-perspective-mesh/` | Perspective mesh warp filter untuk source video |
 | **HLTN Advanced Output** | Output | `obs-hltn-advanced/` | Multi-display output dengan warp mesh projection mapping |
 
+### Roadmap
+- **Fase 1 (current):** Plugin plugin sebagai add-on OBS Studio
+- **Fase 2:** Tambah plugin plugin lain sesuai kebutuhan New Media Art
+- **Fase 3:** Build standalone creative software dengan pondasi source code OBS (`obs-studio/`)
+- Monorepo `Hltn_Map/` menyimpan semua plugin + OBS source sebagai dependency
+
 Repositori ini fokus pada **HLTN Advanced Output**.
 
 ## Overview
