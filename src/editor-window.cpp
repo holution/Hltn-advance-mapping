@@ -290,6 +290,7 @@ static void xml_load(adv_editor *ed, const wchar_t *path)
 		pos = de + 10;
 
 		DisplayConfig d;
+		d.slices.clear();
 		std::wstring dtag = xml.substr(ds, xml.find(L'>', ds) - ds + 1);
 		d.output_type = get_int(dtag, L"output_type", 0);
 		d.monitor = get_int(dtag, L"monitor", 1);
