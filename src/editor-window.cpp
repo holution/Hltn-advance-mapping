@@ -181,11 +181,16 @@ static void layout_output_slices(DisplayConfig *d, uint32_t canvas_cx, uint32_t 
 	}
 	float cw = (float)canvas_cx / (float)cols;
 	float ch = (float)canvas_cy / (float)rows;
+	float pad = 30.0f;
 	for (int i = 0; i < n; i++) {
 		auto &sc = d->slices[i];
 		int col = i % cols;
 		int row = i / cols;
-		sc.mesh.init_full_rect(sc.mesh_cols, sc.mesh_rows, col * cw, row * ch, cw, ch);
+		float x0 = col * cw - (col > 0 ? pad : 0.0f);
+		float y0 = row * ch - (row > 0 ? pad : 0.0f);
+		float w = cw + (col > 0 ? pad : 0.0f) + (col < cols - 1 ? pad : 0.0f);
+		float h = ch + (row > 0 ? pad : 0.0f) + (row < rows - 1 ? pad : 0.0f);
+		sc.mesh.init_full_rect(sc.mesh_cols, sc.mesh_rows, x0, y0, w, h);
 		sc.mesh_dirty = true;
 	}
 }
@@ -1027,6 +1032,7 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 	gs_effect_t *eff = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	if (!eff) return;
 	gs_eparam_t *img = gs_effect_get_param_by_name(eff, "image");
+	gs_projection_push();
 	gs_viewport_push();
 	gs_set_viewport(0, 0, (int)cx, (int)cy);
 
@@ -1065,6 +1071,7 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 
 	gs_load_vertexbuffer(nullptr);
 	gs_viewport_pop();
+	gs_projection_pop();
 }
 
 static BOOL CALLBACK mon_enum_cb(HMONITOR hm, HDC, LPRECT r, LPARAM lp)
