@@ -31,6 +31,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
+	obs_frontend_remove_event_callback(frontend_event, nullptr);
 	if (g_editor) {
 		editor_close(g_editor);
 		g_editor = nullptr;

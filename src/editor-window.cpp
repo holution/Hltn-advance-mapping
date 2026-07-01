@@ -783,11 +783,6 @@ static void stop_output(DisplayConfig *d)
 		obs_display_destroy(d->output_display); d->output_display = nullptr;
 	}
 	if (d->output_hwnd) { DestroyWindow(d->output_hwnd); d->output_hwnd = nullptr; }
-	obs_enter_graphics();
-	for (auto &s : d->slices) {
-		if (s.vbuf) { gs_vertexbuffer_destroy(s.vbuf); s.vbuf = nullptr; }
-	}
-	obs_leave_graphics();
 	d->output_active = false;
 }
 
@@ -1031,10 +1026,12 @@ adv_editor *editor_open()
 	init_theme();
 	HINSTANCE hi = GetModuleHandleW(nullptr);
 	WNDCLASSW wc = {};
-	wc.lpfnWndProc = editor_wndproc; wc.hInstance = hi;
-	wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-	wc.lpszClassName = WND_CLASS; RegisterClassW(&wc);
+	if (!GetClassInfoW(hi, WND_CLASS, &wc)) {
+		wc.lpfnWndProc = editor_wndproc; wc.hInstance = hi;
+		wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+		wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+		wc.lpszClassName = WND_CLASS; RegisterClassW(&wc);
+	}
 
 	int ww = ed->canvas_cx + ed->left_panel_w + ed->right_panel_w + 20;
 	int wh = ed->canvas_cy + ed->toolbar_h + ed->status_h + 40;
@@ -1046,10 +1043,12 @@ adv_editor *editor_open()
 	if (!ed->hwnd) { bfree(ed); return nullptr; }
 
 	WNDCLASSW pc = {};
-	pc.lpfnWndProc = preview_wndproc; pc.hInstance = hi;
-	pc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_CROSS);
-	pc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-	pc.lpszClassName = L"HltnAdvPreview"; RegisterClassW(&pc);
+	if (!GetClassInfoW(hi, L"HltnAdvPreview", &pc)) {
+		pc.lpfnWndProc = preview_wndproc; pc.hInstance = hi;
+		pc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_CROSS);
+		pc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+		pc.lpszClassName = L"HltnAdvPreview"; RegisterClassW(&pc);
+	}
 
 	RECT cr; GetClientRect(ed->hwnd, &cr);
 	int cw = cr.right - ed->left_panel_w - ed->right_panel_w;
