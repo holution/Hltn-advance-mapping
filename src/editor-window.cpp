@@ -37,6 +37,20 @@ static bool load_blend_effect()
 {
 	if (g_blend_effect) return true;
 	char *f = obs_module_file("edge_blend.effect");
+	if (!f) {
+		wchar_t dll_path[MAX_PATH] = {};
+		HMODULE hm = GetModuleHandleW(L"hltn-advanced.dll");
+		if (hm) {
+			GetModuleFileNameW(hm, dll_path, MAX_PATH);
+			std::wstring ws(dll_path);
+			auto pos = ws.rfind(L'\\');
+			if (pos != std::wstring::npos) ws = ws.substr(0, pos);
+			ws += L"\\data\\edge_blend.effect";
+			int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			f = (char *)bmalloc(len);
+			WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, f, len, nullptr, nullptr);
+		}
+	}
 	if (!f) return false;
 	obs_enter_graphics();
 	g_blend_effect = gs_effect_create_from_file(f, nullptr);
