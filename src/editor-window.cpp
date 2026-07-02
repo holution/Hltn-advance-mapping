@@ -76,11 +76,14 @@ static void set_blend_uniforms(SliceConfig *sc)
 		if (v.x < min_x) min_x = v.x; if (v.x > max_x) max_x = v.x;
 		if (v.y < min_y) min_y = v.y; if (v.y > max_y) max_y = v.y;
 	}
-	vec4 bounds; vec4_set(&bounds, min_x, max_x, min_y, max_y);
-	vec4 widths; vec4_set(&widths, (float)sc->blend_l, (float)sc->blend_r, (float)sc->blend_t, (float)sc->blend_b);
-	vec4 stretch; vec4_set(&stretch, (float)sc->blend_ls, (float)sc->blend_rs, (float)sc->blend_ts, (float)sc->blend_bs);
-	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_bounds"), &bounds);
-	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_widths"), &widths);
+	float mw = max_x - min_x; if (mw < 1.0f) mw = 1.0f;
+	float mh = max_y - min_y; if (mh < 1.0f) mh = 1.0f;
+	vec4 stretch;
+	vec4_set(&stretch,
+		sc->blend_l > 0 && sc->blend_ls > 0 ? (float)sc->blend_ls / mw : 0.0f,
+		sc->blend_r > 0 && sc->blend_rs > 0 ? (float)sc->blend_rs / mw : 0.0f,
+		sc->blend_t > 0 && sc->blend_ts > 0 ? (float)sc->blend_ts / mh : 0.0f,
+		sc->blend_b > 0 && sc->blend_bs > 0 ? (float)sc->blend_bs / mh : 0.0f);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_stretch"), &stretch);
 }
 
@@ -224,24 +227,28 @@ static void rebuild_vbuf(SliceConfig *sc, uint32_t canvas_cx, uint32_t canvas_cy
 	struct gs_vb_data *vd = gs_vbdata_create();
 	vd->num = (uint32_t)nv;
 	vd->points = (vec3 *)bzalloc(nv * sizeof(vec3));
-	vd->num_tex = 1;
-	vd->tvarray = (struct gs_tvertarray *)bzalloc(sizeof(struct gs_tvertarray));
+	vd->num_tex = 2;
+	vd->tvarray = (struct gs_tvertarray *)bzalloc(2 * sizeof(struct gs_tvertarray));
 	vd->tvarray[0].width = 2;
 	vd->tvarray[0].array = bzalloc(nv * sizeof(vec2));
-	float inv_cols = 1.0f / (float)(cols - 1), inv_rows = 1.0f / (float)(rows - 1);
+	vd->tvarray[1].width = 2;
+	vd->tvarray[1].array = bzalloc(nv * sizeof(vec2));
+	float dinv_cols = 1.0f / (float)(cols - 1), dinv_rows = 1.0f / (float)(rows - 1);
 	float tx0 = (float)sc->slice_x / (float)canvas_cx;
 	float ty0 = (float)sc->slice_y / (float)canvas_cy;
 	float tx1 = (float)(sc->slice_x + sc->slice_w) / (float)canvas_cx;
 	float ty1 = (float)(sc->slice_y + sc->slice_h) / (float)canvas_cy;
 	size_t idx = 0;
 	vec2 *tverts = (vec2 *)vd->tvarray[0].array;
+	vec2 *gverts = (vec2 *)vd->tvarray[1].array;
 	for (auto &q : quads) {
 		Vec2 verts[4];
 		for (int i = 0; i < 4; i++) verts[i] = sc->mesh.get_vertex(q[i]);
 		auto setv = [&](int vi) {
 			vd->points[idx] = {verts[vi].x, verts[vi].y, 0.0f};
 			int ci = q[vi] % cols, ri = q[vi] / cols;
-			tverts[idx] = {tx0 + (float)ci * inv_cols * (tx1 - tx0), ty0 + (float)ri * inv_rows * (ty1 - ty0)};
+			tverts[idx] = {tx0 + (float)ci * dinv_cols * (tx1 - tx0), ty0 + (float)ri * dinv_rows * (ty1 - ty0)};
+			gverts[idx] = {(float)ci * dinv_cols, (float)ri * dinv_rows};
 			idx++;
 		};
 		setv(0); setv(1); setv(2); setv(0); setv(2); setv(3);
