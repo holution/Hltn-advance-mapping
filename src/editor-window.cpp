@@ -721,19 +721,21 @@ static void preview_draw(void *data, uint32_t cx, uint32_t cy)
 				if (sl->mesh_dirty || !sl->vbuf)
 					rebuild_vbuf(sl, ed->canvas_cx, ed->canvas_cy);
 			}
+			bool has_blend = false;
+			for (int s = 0; s < (int)slices.size(); s++)
+				if (slices[s].blend_enabled) { has_blend = true; break; }
+			bool blend_ok = has_blend && g_blend_effect != nullptr;
+
 			while (gs_effect_loop(eff, "Draw")) {
 				for (int s = 0; s < (int)slices.size(); s++) {
 					auto *sl = &slices[s];
-					if (sl->blend_enabled) continue;
+					if (sl->blend_enabled && blend_ok) continue;
 					if (!sl->vbuf) continue;
 					gs_load_vertexbuffer(sl->vbuf);
 					gs_draw(GS_TRIS, 0, sl->num_verts);
 				}
 			}
-			bool has_blend = false;
-			for (int s = 0; s < (int)slices.size(); s++)
-				if (slices[s].blend_enabled) { has_blend = true; break; }
-			if (has_blend && load_blend_effect() && g_blend_effect) {
+			if (has_blend && g_blend_effect) {
 				gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
 				if (bimg) gs_effect_set_texture_srgb(bimg, tex);
 				while (gs_effect_loop(g_blend_effect, "Draw")) {
@@ -1024,7 +1026,22 @@ static void output_draw(void *data, uint32_t cx, uint32_t cy)
 
 	bool has_blend = false;
 	for (auto &sc : d->slices) if (sc.blend_enabled) { has_blend = true; break; }
-	if (has_blend && load_blend_effect() && g_blend_effect) {
+	bool blend_ok = has_blend && g_blend_effect != nullptr;
+
+	while (gs_effect_loop(eff, "Draw")) {
+		for (auto &sc : d->slices) {
+			if (sc.slice_w <= 0 || sc.slice_h <= 0) continue;
+			if (sc.blend_enabled && blend_ok) continue;
+			if (sc.mesh_dirty || !sc.vbuf)
+				rebuild_vbuf(&sc, d->canvas_cx, d->canvas_cy);
+			if (sc.vbuf) {
+				gs_load_vertexbuffer(sc.vbuf);
+				gs_draw(GS_TRIS, 0, sc.num_verts);
+			}
+		}
+	}
+
+	if (has_blend && g_blend_effect) {
 		gs_eparam_t *bimg = gs_effect_get_param_by_name(g_blend_effect, "image");
 		if (bimg) gs_effect_set_texture_srgb(bimg, tex);
 		while (gs_effect_loop(g_blend_effect, "Draw")) {
