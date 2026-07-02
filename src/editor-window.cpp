@@ -78,8 +78,10 @@ static void set_blend_uniforms(SliceConfig *sc)
 	}
 	vec4 bounds; vec4_set(&bounds, min_x, max_x, min_y, max_y);
 	vec4 widths; vec4_set(&widths, (float)sc->blend_l, (float)sc->blend_r, (float)sc->blend_t, (float)sc->blend_b);
+	vec4 stretch; vec4_set(&stretch, (float)sc->blend_ls, (float)sc->blend_rs, (float)sc->blend_ts, (float)sc->blend_bs);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_bounds"), &bounds);
 	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_widths"), &widths);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(g_blend_effect, "blend_stretch"), &stretch);
 }
 
 static void init_theme()
@@ -559,10 +561,14 @@ static void draw_inspector(HDC dc, adv_editor *ed)
 		btn(dc, sc->blend_enabled ? L"[x] Enable" : L"[ ] Enable", x + pad, y, 70, 18, false, sc->blend_enabled);
 		y += 22;
 		if (sc->blend_enabled) {
-			slider_int_track(dc, L"Left",   x + pad, y, w - pad*2, &sc->blend_l, 0, 500, ed); y += 22;
-			slider_int_track(dc, L"Right",  x + pad, y, w - pad*2, &sc->blend_r, 0, 500, ed); y += 22;
-			slider_int_track(dc, L"Top",    x + pad, y, w - pad*2, &sc->blend_t, 0, 500, ed); y += 22;
-			slider_int_track(dc, L"Bottom", x + pad, y, w - pad*2, &sc->blend_b, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"L W",    x + pad, y, w - pad*2, &sc->blend_l, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"L St",   x + pad, y, w - pad*2, &sc->blend_ls, 1, 500, ed); y += 22;
+			slider_int_track(dc, L"R W",    x + pad, y, w - pad*2, &sc->blend_r, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"R St",   x + pad, y, w - pad*2, &sc->blend_rs, 1, 500, ed); y += 22;
+			slider_int_track(dc, L"T W",    x + pad, y, w - pad*2, &sc->blend_t, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"T St",   x + pad, y, w - pad*2, &sc->blend_ts, 1, 500, ed); y += 22;
+			slider_int_track(dc, L"B W",    x + pad, y, w - pad*2, &sc->blend_b, 0, 500, ed); y += 22;
+			slider_int_track(dc, L"B St",   x + pad, y, w - pad*2, &sc->blend_bs, 1, 500, ed); y += 22;
 		}
 		y += 4;
 

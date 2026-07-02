@@ -11,6 +11,7 @@ struct SliceConfig {
 	int slice_x, slice_y, slice_w, slice_h;
 	int mesh_cols, mesh_rows;
 	int blend_l, blend_r, blend_t, blend_b;
+	int blend_ls, blend_rs, blend_ts, blend_bs;
 	bool blend_enabled;
 	int brightness, contrast, gamma, opacity;
 
@@ -23,6 +24,7 @@ struct SliceConfig {
 		slice_x = 0; slice_y = 0; slice_w = 1920; slice_h = 1080;
 		mesh_cols = 2; mesh_rows = 2;
 		blend_l = 0; blend_r = 0; blend_t = 0; blend_b = 0;
+		blend_ls = 50; blend_rs = 50; blend_ts = 50; blend_bs = 50;
 		blend_enabled = false;
 		brightness = 0; contrast = 100; gamma = 100; opacity = 100;
 		mesh_dirty = true; vbuf = nullptr; num_verts = 0;

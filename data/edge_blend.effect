@@ -1,7 +1,8 @@
 uniform float4x4 ViewProj;
 uniform texture2d image;
-uniform float4 blend_bounds; // x=min_x, y=max_x, z=min_y, w=max_y
-uniform float4 blend_widths; // x=left, y=right, z=top, w=bottom
+uniform float4 blend_bounds;  // x=min_x, y=max_x, z=min_y, w=max_y
+uniform float4 blend_widths;  // x=left_w, y=right_w, z=top_w, w=bottom_w
+uniform float4 blend_stretch; // x=left_st, y=right_st, z=top_st, w=bottom_st
 
 sampler_state textureSampler {
 	Filter    = Linear;
@@ -31,16 +32,32 @@ float4 PSBlend(VertData vIn) : SV_Target
 	float max_x = blend_bounds.y;
 	float min_y = blend_bounds.z;
 	float max_y = blend_bounds.w;
-	float l = blend_widths.x;
-	float r = blend_widths.y;
-	float t = blend_widths.z;
-	float b = blend_widths.w;
 
 	float a = 1.0;
-	if (l > 0.0) { float da = (vIn.local.x - min_x) / l; if (da < a) a = da; }
-	if (r > 0.0) { float da = (max_x - vIn.local.x) / r; if (da < a) a = da; }
-	if (t > 0.0) { float da = (vIn.local.y - min_y) / t; if (da < a) a = da; }
-	if (b > 0.0) { float da = (max_y - vIn.local.y) / b; if (da < a) a = da; }
+	float lw = blend_widths.x;
+	float ls = blend_stretch.x;
+	if (lw > 0.0 && ls > 0.0) {
+		float da = (vIn.local.x - min_x) / ls;
+		if (da < a) a = da;
+	}
+	float rw = blend_widths.y;
+	float rs = blend_stretch.y;
+	if (rw > 0.0 && rs > 0.0) {
+		float da = (max_x - vIn.local.x) / rs;
+		if (da < a) a = da;
+	}
+	float tw = blend_widths.z;
+	float ts = blend_stretch.z;
+	if (tw > 0.0 && ts > 0.0) {
+		float da = (vIn.local.y - min_y) / ts;
+		if (da < a) a = da;
+	}
+	float bw = blend_widths.w;
+	float bs = blend_stretch.w;
+	if (bw > 0.0 && bs > 0.0) {
+		float da = (max_y - vIn.local.y) / bs;
+		if (da < a) a = da;
+	}
 	if (a < 0.0) a = 0.0; if (a > 1.0) a = 1.0;
 
 	texColor.a *= a;
